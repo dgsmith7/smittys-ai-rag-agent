@@ -9,13 +9,22 @@ from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
+# Add imports for caching
+from langchain.globals import set_llm_cache
+from langchain.cache import InMemoryCache
+
+# Set up in-memory cache for LLM responses
+set_llm_cache(InMemoryCache())
+# For persistent caching between restarts, use SQLiteCache instead:
+# from langchain.cache import SQLiteCache
+# set_llm_cache(SQLiteCache(database_path=".langchain.db"))
 
 CHROMA_PATH = "chroma_db" # Directory to store ChromaDB data
 
 load_dotenv() # Optional: Loads environment variables from.env file
 
 DATA_PATH = "data/"
-PDF_FILENAME = "actionSequence.pdf" # Replace with your PDF filename
+PDF_FILENAME = "master.pdf" # Replace with your PDF filename
 
 def load_documents():
     """Loads documents from the specified data path."""
@@ -27,10 +36,10 @@ def load_documents():
     return documents
 
 def split_documents(documents):
-    """Splits documents into smaller chunks."""
+    """Splits documents into smaller chunks optimized for phi3:mini."""
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200,
+        chunk_size=500,  # Smaller chunks for phi3:mini's context window
+        chunk_overlap=50,  # Reduced overlap for efficiency
         length_function=len,
         is_separator_regex=False,
     )
@@ -106,6 +115,50 @@ Question: {question}
     print("RAG chain created.")
     return rag_chain
 
+def create_optimized_rag_chain(vector_store, llm_model_name="phi3:mini", context_window=4096):
+    """Creates an optimized RAG chain for CPU-only environments."""
+    # Initialize the LLM with settings optimized for CPU
+    llm = ChatOllama(
+        model=llm_model_name,
+        temperature=0,
+        num_ctx=context_window,
+        num_thread=4  # Limit threads for stable web serving
+    )
+    print(f"Initialized ChatOllama with model: {llm_model_name}, context window: {context_window}")
+    
+    # Use MMR retrieval with modest parameters for better relevance while controlling performance
+    retriever = vector_store.as_retriever(
+        search_type="mmr",  # Maximum Marginal Relevance for better diversity
+        search_kwargs={
+            'k': 3,         # Retrieve only 3 chunks for efficiency
+            'fetch_k': 8,   # Consider 8 candidates initially
+            'lambda_mult': 0.7  # Balance between relevance and diversity
+        }
+    )
+    print("MMR Retriever initialized with performance settings.")
+    
+    # Use a simpler template that requires less computation
+    template = """Answer the question based ONLY on this context:
+{context}
+
+Question: {question}
+
+Keep your answer concise but informative.
+"""
+    prompt = ChatPromptTemplate.from_template(template)
+    print("Prompt template created.")
+    
+    # Standard RAG chain without additional components
+    rag_chain = (
+        {"context": retriever, "question": RunnablePassthrough()}
+        | prompt
+        | llm
+        | StrOutputParser()
+    )
+    print("Optimized RAG chain created for CPU environment.")
+    
+    return rag_chain
+
 def query_rag(chain, question):
     """Queries the RAG chain and prints the response."""
     print("\nQuerying RAG chain...")
@@ -113,6 +166,29 @@ def query_rag(chain, question):
     response = chain.invoke(question)
     print("\nResponse:")
     print(response)
+
+async def query_rag_async(chain, question):
+    """Asynchronous version of query_rag for web applications."""
+    print(f"Processing question asynchronously: {question}")
+    response = await chain.ainvoke(question)
+    return response
+
+def initialize_rag_pipeline(model_name="phi3:mini", context_window=4096):
+    """Pre-initializes the entire RAG pipeline for quick responses in web applications."""
+    # 1. Get Embedding Function
+    embedding_function = get_embedding_function()
+    
+    # 2. Load existing vector store (assumes documents are already indexed)
+    vector_store = get_vector_store(embedding_function)
+    
+    # 3. Create optimized RAG chain
+    rag_chain = create_optimized_rag_chain(
+        vector_store, 
+        llm_model_name=model_name, 
+        context_window=context_window
+    )
+    
+    return rag_chain
 
 # --- Main Execution ---
 if __name__ == "__main__":
@@ -129,14 +205,17 @@ if __name__ == "__main__":
     vector_store = index_documents(chunks, embedding_function)
     # To load existing DB instead:
     # vector_store = get_vector_store(embedding_function)
-    # 5. Create RAG Chain
-    rag_chain = create_rag_chain(vector_store, llm_model_name="qwen3:14b") # Use the chosen Qwen 3 model
+    # 5. Create RAG Chain - Using optimized chain with phi3:mini for CPU efficiency
+    rag_chain = create_optimized_rag_chain(vector_store, llm_model_name="phi3:mini", context_window=4096)
     # 6. Query
-    query_question = "What is the main topic of the document?" # Replace with a specific question
+    query_question = "Write the lyrics for a short psychedlic song or poem using the ones in the document for inspiration.  Be sure not to use too many phrases from one song - the inspiration should always be from more than one song.  And don't reveal the name of the inspiration source.  The only output should be the lyrics or poem itself." # Replace with a specific question
     query_rag(rag_chain, query_question)
 
-    query_question_2 = "Summarize the introduction section." # Another example
-    query_rag(rag_chain, query_question_2)
+    # query_question = "What is the main topic of the document?" # Replace with a specific question
+    # query_rag(rag_chain, query_question)
+
+    # query_question_2 = "Write the lyrics for a psychedlic poem using the ones in the document for inspiration." # Another example
+    # query_rag(rag_chain, query_question_2)
 
 
 # documents = load_documents() # Call this later

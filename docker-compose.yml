@@ -1,0 +1,13 @@
+version: "3"
+
+services:
+  sara-rag-api:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./chroma_db:/app/chroma_db
+      - ./data:/app/data
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped
