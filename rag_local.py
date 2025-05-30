@@ -1,5 +1,6 @@
 # rag_local.py
 import os
+import glob
 from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader # Or UnstructuredPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -24,19 +25,35 @@ CHROMA_PATH = "chroma_db" # Directory to store ChromaDB data
 load_dotenv() # Optional: Loads environment variables from.env file
 
 DATA_PATH = "data/"
-PDF_FILENAME = "master.pdf" # Replace with your PDF filename
 
 def load_documents():
-    """Loads documents from the specified data path."""
-    pdf_path = os.path.join(DATA_PATH, PDF_FILENAME)
-    loader = PyPDFLoader(pdf_path)
-    # loader = UnstructuredPDFLoader(pdf_path) # Alternative
-    documents = loader.load()
-    print(f"Loaded {len(documents)} page(s) from {pdf_path}")
+    """Loads all PDF documents from the specified data path."""
+    documents = []
+    pdf_files = glob.glob(os.path.join(DATA_PATH, "*.pdf"))
+    
+    if not pdf_files:
+        print(f"No PDF files found in {DATA_PATH}")
+        return documents
+        
+    for pdf_path in pdf_files:
+        try:
+            loader = PyPDFLoader(pdf_path)
+            # loader = UnstructuredPDFLoader(pdf_path) # Alternative
+            pdf_documents = loader.load()
+            documents.extend(pdf_documents)
+            print(f"Loaded {len(pdf_documents)} page(s) from {pdf_path}")
+        except Exception as e:
+            print(f"Error loading {pdf_path}: {e}")
+    
+    print(f"Loaded a total of {len(documents)} page(s) from {len(pdf_files)} PDF file(s)")
     return documents
 
 def split_documents(documents):
     """Splits documents into smaller chunks optimized for phi3:mini."""
+    if not documents:
+        print("No documents to split")
+        return []
+        
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=500,  # Smaller chunks for phi3:mini's context window
         chunk_overlap=50,  # Reduced overlap for efficiency
@@ -56,15 +73,41 @@ def get_embedding_function(model_name="nomic-embed-text"):
 
 def get_vector_store(embedding_function, persist_directory=CHROMA_PATH):
     """Initializes or loads the Chroma vector store."""
+    if os.path.exists(persist_directory):
+        try:
+            vectorstore = Chroma(
+                persist_directory=persist_directory,
+                embedding_function=embedding_function
+            )
+            print(f"Vector store loaded from: {persist_directory}")
+            return vectorstore
+        except Exception as e:
+            print(f"Error loading vector store: {e}")
+            print("Creating a new vector store...")
+            # If loading fails, we'll create a new one
+    
+    # Handle case where we need to create a new empty vectorstore
+    # (either the directory doesn't exist or loading failed)
     vectorstore = Chroma(
         persist_directory=persist_directory,
         embedding_function=embedding_function
     )
-    print(f"Vector store initialized/loaded from: {persist_directory}")
+    vectorstore.persist()
+    print(f"New empty vector store initialized at: {persist_directory}")
     return vectorstore
 
 def index_documents(chunks, embedding_function, persist_directory=CHROMA_PATH):
     """Indexes document chunks into the Chroma vector store."""
+    if not chunks:
+        print("No document chunks to index")
+        # Return an empty vector store
+        vectorstore = Chroma(
+            persist_directory=persist_directory,
+            embedding_function=embedding_function
+        )
+        vectorstore.persist()
+        return vectorstore
+        
     print(f"Indexing {len(chunks)} chunks...")
     # Use from_documents for initial creation.
     # This will overwrite existing data if the directory exists but isn't a valid Chroma DB.
@@ -208,8 +251,11 @@ if __name__ == "__main__":
     # 5. Create RAG Chain - Using optimized chain with phi3:mini for CPU efficiency
     rag_chain = create_optimized_rag_chain(vector_store, llm_model_name="phi3:mini", context_window=4096)
     # 6. Query
-    query_question = "Write the lyrics for a short psychedlic song or poem using the ones in the document for inspiration.  Be sure not to use too many phrases from one song - the inspiration should always be from more than one song.  And don't reveal the name of the inspiration source.  The only output should be the lyrics or poem itself." # Replace with a specific question
-    query_rag(rag_chain, query_question)
+    if docs:  # Only query if we have documents
+        query_question = "Write the lyrics for a short psychedlic song or poem using the ones in the document for inspiration.  Be sure not to use too many phrases from one song - the inspiration should always be from more than one song.  And don't reveal the name of the inspiration source.  The only output should be the lyrics or poem itself." # Replace with a specific question
+        query_rag(rag_chain, query_question)
+    else:
+        print("No documents loaded. RAG system is ready but has no knowledge base.")
 
     # query_question = "What is the main topic of the document?" # Replace with a specific question
     # query_rag(rag_chain, query_question)
