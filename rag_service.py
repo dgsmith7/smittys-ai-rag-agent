@@ -20,7 +20,7 @@ rag_chain = create_optimized_rag_chain(
     llm_model_name="phi3:mini", 
     context_window=4096
 )
-print("RAG pipeline ready to serve requests!")
+print("RAG pipeline ready to serve requests!", flush=True)
 
 async def process_query(question):
     """Process a single query and return the response"""
@@ -35,8 +35,33 @@ def run_query(question):
     return asyncio.run(process_query(question))
 
 if __name__ == "__main__":
-    # Test the service
-    question = "What is this document about?"
-    response = run_query(question)
-    print(f"Question: {question}")
-    print(f"Response: {response}")
+    # Run as a service that processes commands from stdin
+    import sys
+    
+    print("RAG service is running and ready to process queries...", flush=True)
+    
+    # Create event loop for async operations
+    loop = asyncio.get_event_loop()
+    
+    try:
+        # Process input lines as they come in
+        for line in sys.stdin:
+            line = line.strip()
+            
+            # Command format: "QUERY:requestId:question"
+            if line.startswith("QUERY:"):
+                parts = line.split(":", 2)
+                if len(parts) == 3:
+                    command, request_id, question = parts
+                    
+                    # Process the query asynchronously
+                    response = loop.run_until_complete(process_query(question))
+                    
+                    # Send the response back with the request ID
+                    # Format: "RESPONSE:requestId:result"
+                    print(f"RESPONSE:{request_id}:{response}")
+                    sys.stdout.flush()  # Ensure output is sent immediately
+    except KeyboardInterrupt:
+        print("RAG service shutting down...")
+    finally:
+        loop.close()
