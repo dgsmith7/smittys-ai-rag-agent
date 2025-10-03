@@ -2,6 +2,9 @@
 
 SARA (Smart AI Retrieval Assistant) is a Retrieval-Augmented Generation (RAG) service that provides multiple specialized endpoints for different use cases.
 
+Based on this article:
+https://www.freecodecamp.org/news/author/chaitanyarahalkar/
+
 ## Overview
 
 This service combines the power of local LLMs with vector databases to provide context-aware responses based on your own document collections. The system supports multiple specialized endpoints, each with its own document collection and response style.
@@ -62,6 +65,8 @@ See the [API documentation](docs.md) for detailed information about each endpoin
    ```
    ollama pull phi3:mini
    ollama pull nomic-embed-text
+
+   ollama run phi3:mini
    ```
 
 5. Create the data directories (these will be created automatically on first run):
